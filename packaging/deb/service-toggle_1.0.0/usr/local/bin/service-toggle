@@ -1,0 +1,402 @@
+#!/usr/bin/env python3
+"""
+Service Toggle — quick on/off panel for background services + CPU core presets
+"""
+
+import gi
+gi.require_version("Gtk", "4.0")
+gi.require_version("Adw", "1")
+
+from gi.repository import Gtk, Adw, GLib, Gio
+import subprocess
+import threading
+import os
+
+# ── Services to manage ────────────────────────────────────────────────────────
+SERVICES = [
+    {
+        "name": "Docker",
+        "icon": "🐳",
+        "units": ["docker.service", "docker.socket", "containerd.service"],
+        "desc": "Container runtime",
+    },
+    {
+        "name": "Ollama",
+        "icon": "🤖",
+        "units": ["ollama.service"],
+        "desc": "Local AI model server",
+    },
+    {
+        "name": "Virtual Machines",
+        "icon": "🖥",
+        "units": ["libvirtd.service", "libvirtd.socket", "virtlogd.service"],
+        "desc": "KVM / QEMU hypervisor",
+    },
+    {
+        "name": "Printing (CUPS)",
+        "icon": "🖨",
+        "units": ["cups.service", "cups.socket"],
+        "desc": "Print spooler",
+    },
+    {
+        "name": "Bluetooth",
+        "icon": "📶",
+        "units": ["bluetooth.service"],
+        "desc": "Bluetooth stack",
+    },
+    {
+        "name": "Tailscale",
+        "icon": "🔒",
+        "units": ["tailscaled.service"],
+        "desc": "Tailscale VPN",
+    },
+    {
+        "name": "Avahi (mDNS)",
+        "icon": "📡",
+        "units": ["avahi-daemon.service", "avahi-daemon.socket"],
+        "desc": "Local network discovery",
+    },
+]
+
+# ── CPU presets ───────────────────────────────────────────────────────────────
+TOTAL_CPUS = 24   # AMD Ryzen AI 9 HX 370 — 12 cores × 2 threads
+
+CPU_PRESETS = [
+    {
+        "label": "8",
+        "subtitle": "Power saver",
+        "icon": "🔋",
+        "online": 8,     # keep CPUs 0-7 online
+        "color": "success",
+    },
+    {
+        "label": "16",
+        "subtitle": "Balanced",
+        "icon": "⚖",
+        "online": 16,    # keep CPUs 0-15 online
+        "color": "warning",
+    },
+    {
+        "label": "24",
+        "subtitle": "Full power",
+        "icon": "⚡",
+        "online": 24,    # all CPUs online
+        "color": "error",
+    },
+]
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
+
+def run(cmd):
+    r = subprocess.run(cmd, capture_output=True, text=True)
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+def is_active(units):
+    for u in units:
+        rc, _, _ = run(["systemctl", "is-active", u])
+        if rc == 0:
+            return True
+    return False
+
+def start_units(units):
+    for u in units:
+        subprocess.run(["sudo", "systemctl", "start", u], capture_output=True)
+
+def stop_units(units):
+    for u in units:
+        subprocess.run(["sudo", "systemctl", "stop", u], capture_output=True)
+
+def get_online_cpu_count():
+    count = 0
+    for i in range(TOTAL_CPUS):
+        path = f"/sys/devices/system/cpu/cpu{i}/online"
+        if i == 0:
+            count += 1   # cpu0 is always online, no online file
+            continue
+        try:
+            with open(path) as f:
+                if f.read().strip() == "1":
+                    count += 1
+        except FileNotFoundError:
+            pass
+    return count
+
+def set_cpu_count(n):
+    """Enable CPUs 0..n-1, disable the rest. cpu0 is always on."""
+    n = max(1, min(n, TOTAL_CPUS))
+    for i in range(1, TOTAL_CPUS):   # cpu0 cannot be taken offline
+        path = f"/sys/devices/system/cpu/cpu{i}/online"
+        value = "1" if i < n else "0"
+        subprocess.run(
+            f"echo {value} | sudo tee {path}",
+            shell=True, capture_output=True
+        )
+
+# ── Main application ──────────────────────────────────────────────────────────
+
+class ServiceToggleApp(Adw.Application):
+    def __init__(self):
+        super().__init__(application_id="com.rog.servicetoggle",
+                         flags=Gio.ApplicationFlags.DEFAULT_FLAGS)
+        self.connect("activate", self.on_activate)
+
+    def on_activate(self, app):
+        win = ServiceWindow(application=app)
+        win.present()
+
+
+class ServiceWindow(Adw.ApplicationWindow):
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.set_title("Service Toggle")
+        self.set_default_size(440, -1)
+        self.set_resizable(False)
+
+        # ── Root layout ──────────────────────────────────────────
+        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        self.set_content(outer)
+
+        # Header
+        header = Adw.HeaderBar()
+        refresh_btn = Gtk.Button(icon_name="view-refresh-symbolic")
+        refresh_btn.set_tooltip_text("Refresh status")
+        refresh_btn.connect("clicked", lambda _: self.refresh_all())
+        header.pack_end(refresh_btn)
+        outer.append(header)
+
+        scroll = Gtk.ScrolledWindow()
+        scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scroll.set_propagate_natural_height(True)
+        outer.append(scroll)
+
+        clamp = Adw.Clamp()
+        clamp.set_maximum_size(440)
+        clamp.set_margin_top(12)
+        clamp.set_margin_bottom(12)
+        clamp.set_margin_start(12)
+        clamp.set_margin_end(12)
+        scroll.set_child(clamp)
+
+        page = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=18)
+        clamp.set_child(page)
+
+        # ── CPU Core Presets section ─────────────────────────────
+        cpu_group = Adw.PreferencesGroup()
+        cpu_group.set_title("CPU Cores")
+        cpu_group.set_description("AMD Ryzen AI 9 HX 370 · 12 cores · 24 threads")
+        page.append(cpu_group)
+
+        # Wrap everything in a single column box inside a plain ListBoxRow
+        cpu_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=8)
+        cpu_col.set_halign(Gtk.Align.FILL)
+        cpu_col.set_margin_top(12)
+        cpu_col.set_margin_bottom(12)
+        cpu_col.set_margin_start(12)
+        cpu_col.set_margin_end(12)
+
+        # Current core count label
+        self._cpu_label = Gtk.Label()
+        self._cpu_label.set_markup("<b>?</b> / 24 threads active")
+        self._cpu_label.set_halign(Gtk.Align.CENTER)
+        cpu_col.append(self._cpu_label)
+
+        # Core bar (mini visualiser — 24 coloured blocks)
+        self._core_bar = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=2)
+        self._core_bar.set_halign(Gtk.Align.CENTER)
+        self._core_blocks = []
+        for i in range(TOTAL_CPUS):
+            blk = Gtk.Label(label=" ")
+            blk.set_size_request(11, 16)
+            blk.add_css_class("card")
+            self._core_blocks.append(blk)
+            self._core_bar.append(blk)
+        cpu_col.append(self._core_bar)
+
+        # Preset buttons  [ 🔋 8 ]  [ ⚖ 16 ]  [ ⚡ 24 ]
+        btn_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=10)
+        btn_row.set_halign(Gtk.Align.CENTER)
+        btn_row.set_margin_top(4)
+        self._cpu_buttons = []
+        for preset in CPU_PRESETS:
+            btn = Gtk.Button()
+            btn_content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2)
+            btn_content.set_margin_top(8)
+            btn_content.set_margin_bottom(8)
+            btn_content.set_margin_start(16)
+            btn_content.set_margin_end(16)
+            icon_lbl = Gtk.Label(label=preset["icon"])
+            num_lbl  = Gtk.Label()
+            num_lbl.set_markup(f"<b>{preset['label']} cores</b>")
+            sub_lbl  = Gtk.Label(label=preset["subtitle"])
+            sub_lbl.add_css_class("caption")
+            sub_lbl.add_css_class("dim-label")
+            btn_content.append(icon_lbl)
+            btn_content.append(num_lbl)
+            btn_content.append(sub_lbl)
+            btn.set_child(btn_content)
+            btn.connect("clicked", self._on_cpu_preset, preset)
+            self._cpu_buttons.append((btn, preset))
+            btn_row.append(btn)
+        cpu_col.append(btn_row)
+
+        # Add the column box as a row in the group
+        row_wrap = Gtk.ListBoxRow()
+        row_wrap.set_child(cpu_col)
+        row_wrap.set_activatable(False)
+        row_wrap.set_selectable(False)
+        cpu_group.add(row_wrap)
+
+        # ── Services section ─────────────────────────────────────
+        svc_group = Adw.PreferencesGroup()
+        svc_group.set_title("Background Services")
+        svc_group.set_description("Toggle services on demand to save power")
+        page.append(svc_group)
+
+        self._rows = []
+        for svc in SERVICES:
+            row = self._make_service_row(svc)
+            svc_group.add(row)
+
+        # Status bar
+        self.status_bar = Gtk.Label(label="")
+        self.status_bar.set_margin_bottom(8)
+        self.status_bar.add_css_class("dim-label")
+        outer.append(self.status_bar)
+
+        self.refresh_all()
+
+    # ── CPU helpers ──────────────────────────────────────────────────────────
+
+    def _update_cpu_ui(self, n):
+        self._cpu_label.set_markup(f"<b>{n}</b> / {TOTAL_CPUS} threads active")
+        for i, blk in enumerate(self._core_blocks):
+            if i < n:
+                blk.remove_css_class("dim-label")
+                blk.add_css_class("accent")
+            else:
+                blk.remove_css_class("accent")
+                blk.add_css_class("dim-label")
+        # Highlight matching preset button
+        for btn, preset in self._cpu_buttons:
+            if preset["online"] == n:
+                btn.add_css_class("suggested-action")
+            else:
+                btn.remove_css_class("suggested-action")
+
+    def _on_cpu_preset(self, btn, preset):
+        n = preset["online"]
+        self.status_bar.set_label(f"Setting {n} cores…")
+        btn.set_sensitive(False)
+
+        def worker():
+            set_cpu_count(n)
+            actual = get_online_cpu_count()
+            GLib.idle_add(self._finish_cpu, btn, actual)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_cpu(self, btn, actual):
+        btn.set_sensitive(True)
+        self._update_cpu_ui(actual)
+        self.status_bar.set_label(f"✓ {actual} cores active")
+        return False
+
+    # ── Service row factory ──────────────────────────────────────────────────
+
+    def _make_service_row(self, svc):
+        row = Adw.ActionRow()
+        row.set_title(f"{svc['icon']}  {svc['name']}")
+        row.set_subtitle(svc["desc"])
+
+        toggle = Gtk.Switch()
+        toggle.set_valign(Gtk.Align.CENTER)
+        toggle.set_sensitive(False)
+        row.add_suffix(toggle)
+        row.set_activatable_widget(toggle)
+
+        spinner = Gtk.Spinner()
+        spinner.set_visible(False)
+        row.add_suffix(spinner)
+
+        toggle.connect("state-set", self._on_toggle, svc, toggle, spinner)
+
+        row._svc     = svc
+        row._toggle  = toggle
+        row._spinner = spinner
+        row._busy    = False
+        self._rows.append(row)
+        return row
+
+    # ── Refresh all ──────────────────────────────────────────────────────────
+
+    def refresh_all(self):
+        self.status_bar.set_label("Refreshing…")
+
+        def worker():
+            svc_states = {svc["name"]: is_active(svc["units"]) for svc in SERVICES}
+            cpu_count  = get_online_cpu_count()
+            GLib.idle_add(self._apply_refresh, svc_states, cpu_count)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _apply_refresh(self, svc_states, cpu_count):
+        for row in self._rows:
+            active = svc_states[row._svc["name"]]
+            row._toggle.handler_block_by_func(self._on_toggle)
+            row._toggle.set_active(active)
+            row._toggle.set_state(active)
+            row._toggle.handler_unblock_by_func(self._on_toggle)
+            row._toggle.set_sensitive(True)
+        self._update_cpu_ui(cpu_count)
+        self.status_bar.set_label("")
+        return False
+
+    # ── Service toggle ────────────────────────────────────────────────────────
+
+    def _on_toggle(self, toggle, state, svc, _toggle, spinner):
+        if _toggle._busy:
+            return False
+        _toggle._busy = True
+        _toggle.set_sensitive(False)
+        spinner.set_visible(True)
+        spinner.start()
+        self.status_bar.set_label(
+            f"{'Starting' if state else 'Stopping'} {svc['name']}…"
+        )
+
+        def worker():
+            if state:
+                start_units(svc["units"])
+            else:
+                stop_units(svc["units"])
+            actual = is_active(svc["units"])
+            GLib.idle_add(self._finish_toggle, _toggle, spinner, svc, actual, state)
+
+        threading.Thread(target=worker, daemon=True).start()
+        return True
+
+    def _finish_toggle(self, toggle, spinner, svc, actual, requested):
+        spinner.stop()
+        spinner.set_visible(False)
+        toggle._busy = False
+        toggle.handler_block_by_func(self._on_toggle)
+        toggle.set_active(actual)
+        toggle.set_state(actual)
+        toggle.handler_unblock_by_func(self._on_toggle)
+        toggle.set_sensitive(True)
+        if actual != requested:
+            self.status_bar.set_label(
+                f"⚠ Could not {'start' if requested else 'stop'} {svc['name']}"
+            )
+        else:
+            self.status_bar.set_label(
+                f"{'Started' if actual else 'Stopped'} {svc['name']}"
+            )
+        return False
+
+
+# ── Entry point ───────────────────────────────────────────────────────────────
+
+if __name__ == "__main__":
+    app = ServiceToggleApp()
+    app.run()

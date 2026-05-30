@@ -1,0 +1,19 @@
+Package: service-toggle
+Version: 1.0.0
+Section: utils
+Priority: optional
+Architecture: all
+Depends: python3 (>= 3.10), python3-gi, gir1.2-adw-1, gir1.2-gtk-4.0, sudo, systemd
+Maintainer: Your Name <you@example.com>
+Homepage: https://github.com/YOUR_USERNAME/service-toggle
+Description: Toggle background services and CPU cores from a GTK4 panel
+ Service Toggle is a lightweight GTK4/Adwaita app for Ubuntu that lets you
+ start and stop common background services (Docker, Ollama, Bluetooth,
+ Tailscale, VMs, Printing) with a single click, and switch between CPU
+ core presets to control power consumption.
+ .
+ Features:
+  * One-click toggle for Docker, Ollama, VMs, CUPS, Bluetooth, Tailscale
+  * CPU core presets: 8 (power saver), 16 (balanced), max cores
+  * Live core activity bar visualiser
+  * Designed for GNOME / Ubuntu 24.04+

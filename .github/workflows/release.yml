@@ -1,0 +1,109 @@
+name: Build & Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+jobs:
+  build-deb:
+    name: Build .deb package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version from tag
+        run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
+
+      - name: Stage deb tree
+        run: |
+          PKG=service-toggle_${{ env.VERSION }}
+          mkdir -p $PKG/DEBIAN
+          mkdir -p $PKG/usr/local/bin
+          mkdir -p $PKG/usr/share/applications
+          mkdir -p $PKG/usr/share/icons/hicolor/scalable/apps
+
+          cp service_toggle/__main__.py $PKG/usr/local/bin/service-toggle
+          chmod 755 $PKG/usr/local/bin/service-toggle
+          sed -i "1s|.*|#!/usr/bin/env python3|" $PKG/usr/local/bin/service-toggle
+
+          cp data/service-toggle.desktop $PKG/usr/share/applications/
+          cp data/icons/service-toggle.svg $PKG/usr/share/icons/hicolor/scalable/apps/
+          cp packaging/deb/service-toggle_1.0.0/DEBIAN/control $PKG/DEBIAN/control
+          cp packaging/deb/service-toggle_1.0.0/DEBIAN/postinst $PKG/DEBIAN/postinst
+          chmod 755 $PKG/DEBIAN/postinst
+
+          # Patch version in control file
+          sed -i "s/^Version:.*/Version: ${{ env.VERSION }}/" $PKG/DEBIAN/control
+
+          dpkg-deb --root-owner-group --build $PKG
+
+      - name: Upload .deb artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-toggle-deb
+          path: "*.deb"
+
+  build-snap:
+    name: Build Snap package
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set version from tag
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          sed -i "s/^version:.*/version: \"$VERSION\"/" snap/snapcraft.yaml
+
+      - uses: snapcore/action-build@v1
+        id: snapcraft
+
+      - name: Upload snap artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-toggle-snap
+          path: "*.snap"
+
+  release:
+    name: Create GitHub Release
+    needs: [build-deb, build-snap]
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          merge-multiple: true
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            *.deb
+            *.snap
+          generate_release_notes: true
+          body: |
+            ## Install
+
+            ### Ubuntu / Debian (.deb)
+            ```bash
+            sudo dpkg -i service-toggle_*.deb
+            sudo apt-get install -f   # fix any missing deps
+            ```
+
+            ### Snap
+            ```bash
+            sudo snap install service-toggle_*.snap --classic --dangerous
+            ```
+
+            ### Manual
+            ```bash
+            git clone https://github.com/${{ github.repository }}
+            cd service-toggle
+            sudo cp service_toggle/__main__.py /usr/local/bin/service-toggle
+            sudo chmod +x /usr/local/bin/service-toggle
+            sudo cp data/service-toggle.desktop /usr/share/applications/
+            sudo cp data/icons/service-toggle.svg /usr/share/icons/hicolor/scalable/apps/
+            ```

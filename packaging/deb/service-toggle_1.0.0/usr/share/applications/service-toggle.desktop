@@ -1,0 +1,13 @@
+[Desktop Entry]
+Type=Application
+Name=Service Toggle
+GenericName=Background Service Manager
+Comment=Turn background services and CPU cores on and off
+Icon=io.github.servicetoggle
+Exec=service-toggle
+Terminal=false
+Categories=System;
+Keywords=docker;ollama;services;toggle;bluetooth;vpn;cpu;cores;power;
+StartupWMClass=io.github.servicetoggle
+StartupNotify=true
+X-GNOME-SingleWindow=true
