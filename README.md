@@ -58,7 +58,7 @@ sudo snap install service-toggle --classic
 ### Option 3 — Manual (one command)
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/service-toggle
+git clone https://github.com/oguzemrebal/service-toggle
 cd service-toggle
 sudo cp service_toggle/__main__.py /usr/local/bin/service-toggle
 sudo chmod +x /usr/local/bin/service-toggle
@@ -84,7 +84,7 @@ Add this to `/etc/sudoers.d/service-toggle` so it works without a password promp
 ## Building from source
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/service-toggle
+git clone https://github.com/oguzemrebal/service-toggle
 cd service-toggle
 pip install build
 python -m build

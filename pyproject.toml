@@ -14,5 +14,5 @@ requires-python = ">=3.10"
 service-toggle = "service_toggle.__main__:main"
 
 [project.urls]
-Homepage = "https://github.com/YOUR_USERNAME/service-toggle"
-Issues   = "https://github.com/YOUR_USERNAME/service-toggle/issues"
+Homepage = "https://github.com/oguzemrebal/service-toggle"
+Issues   = "https://github.com/oguzemrebal/service-toggle/issues"
