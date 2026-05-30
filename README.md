@@ -49,10 +49,12 @@ sudo dpkg -i service-toggle_*.deb
 sudo apt-get install -f   # install any missing dependencies
 ```
 
-### Option 2 — Snap
+### Option 2 — Flatpak (any Linux distro)
+
+Download `service-toggle.flatpak` from [Releases](../../releases/latest) then:
 
 ```bash
-sudo snap install service-toggle --classic
+flatpak install service-toggle.flatpak
 ```
 
 ### Option 3 — Manual (one command)
@@ -106,7 +108,7 @@ git tag v1.0.1
 git push origin v1.0.1
 ```
 
-GitHub Actions will automatically build the `.deb` and `.snap`, then create a release.
+GitHub Actions will automatically build the `.deb` and `.flatpak`, then create a release.
 
 ---
 

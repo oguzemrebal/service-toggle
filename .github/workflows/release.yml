@@ -15,7 +15,7 @@ jobs:
       - name: Set version from tag
         run: echo "VERSION=${GITHUB_REF_NAME#v}" >> $GITHUB_ENV
 
-      - name: Stage deb tree
+      - name: Stage and build deb
         run: |
           PKG=service-toggle_${{ env.VERSION }}
           mkdir -p $PKG/DEBIAN
@@ -25,48 +25,56 @@ jobs:
 
           cp service_toggle/__main__.py $PKG/usr/local/bin/service-toggle
           chmod 755 $PKG/usr/local/bin/service-toggle
-          sed -i "1s|.*|#!/usr/bin/env python3|" $PKG/usr/local/bin/service-toggle
 
-          cp data/service-toggle.desktop $PKG/usr/share/applications/
-          cp data/icons/service-toggle.svg $PKG/usr/share/icons/hicolor/scalable/apps/
-          cp packaging/deb/service-toggle_1.0.0/DEBIAN/control $PKG/DEBIAN/control
+          cp data/service-toggle.desktop         $PKG/usr/share/applications/
+          cp data/icons/service-toggle.svg       $PKG/usr/share/icons/hicolor/scalable/apps/
+          cp packaging/deb/service-toggle_1.0.0/DEBIAN/control  $PKG/DEBIAN/control
           cp packaging/deb/service-toggle_1.0.0/DEBIAN/postinst $PKG/DEBIAN/postinst
           chmod 755 $PKG/DEBIAN/postinst
 
-          # Patch version in control file
           sed -i "s/^Version:.*/Version: ${{ env.VERSION }}/" $PKG/DEBIAN/control
 
           dpkg-deb --root-owner-group --build $PKG
+          mv ${PKG}.deb service-toggle_${{ env.VERSION }}_all.deb
 
-      - name: Upload .deb artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
           name: service-toggle-deb
           path: "*.deb"
 
-  build-snap:
-    name: Build Snap package
+  build-flatpak:
+    name: Build Flatpak
     runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@v4
 
-      - name: Set version from tag
+      - name: Install flatpak-builder
         run: |
-          VERSION=${GITHUB_REF_NAME#v}
-          sed -i "s/^version:.*/version: \"$VERSION\"/" snap/snapcraft.yaml
+          sudo apt-get update -qq
+          sudo apt-get install -y flatpak flatpak-builder
+          flatpak remote-add --user --if-not-exists flathub \
+            https://dl.flathub.org/repo/flathub.flatpakrepo
+          flatpak install --user -y flathub \
+            org.gnome.Platform//47 org.gnome.Sdk//47
 
-      - uses: snapcore/action-build@v1
-        id: snapcraft
+      - name: Build Flatpak bundle
+        run: |
+          flatpak-builder --user --install --force-clean \
+            build-dir \
+            packaging/flatpak/io.github.oguzemrebal.ServiceToggle.yaml
+          flatpak build-bundle \
+            ~/.local/share/flatpak/repo \
+            service-toggle.flatpak \
+            io.github.oguzemrebal.ServiceToggle
 
-      - name: Upload snap artifact
-        uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v4
         with:
-          name: service-toggle-snap
-          path: "*.snap"
+          name: service-toggle-flatpak
+          path: "*.flatpak"
 
   release:
     name: Create GitHub Release
-    needs: [build-deb, build-snap]
+    needs: [build-deb, build-flatpak]
     runs-on: ubuntu-24.04
     permissions:
       contents: write
@@ -82,7 +90,7 @@ jobs:
         with:
           files: |
             *.deb
-            *.snap
+            *.flatpak
           generate_release_notes: true
           body: |
             ## Install
@@ -90,17 +98,17 @@ jobs:
             ### Ubuntu / Debian (.deb)
             ```bash
             sudo dpkg -i service-toggle_*.deb
-            sudo apt-get install -f   # fix any missing deps
+            sudo apt-get install -f
             ```
 
-            ### Snap
+            ### Flatpak (any Linux distro)
             ```bash
-            sudo snap install service-toggle_*.snap --classic --dangerous
+            flatpak install service-toggle.flatpak
             ```
 
             ### Manual
             ```bash
-            git clone https://github.com/${{ github.repository }}
+            git clone https://github.com/oguzemrebal/service-toggle
             cd service-toggle
             sudo cp service_toggle/__main__.py /usr/local/bin/service-toggle
             sudo chmod +x /usr/local/bin/service-toggle

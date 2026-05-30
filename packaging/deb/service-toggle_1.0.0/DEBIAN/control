@@ -4,8 +4,8 @@ Section: utils
 Priority: optional
 Architecture: all
 Depends: python3 (>= 3.10), python3-gi, gir1.2-adw-1, gir1.2-gtk-4.0, sudo, systemd
-Maintainer: Your Name <you@example.com>
-Homepage: https://github.com/YOUR_USERNAME/service-toggle
+Maintainer: oguzemrebal <oguzemrebal@users.noreply.github.com>
+Homepage: https://github.com/oguzemrebal/service-toggle
 Description: Toggle background services and CPU cores from a GTK4 panel
  Service Toggle is a lightweight GTK4/Adwaita app for Ubuntu that lets you
  start and stop common background services (Docker, Ollama, Bluetooth,

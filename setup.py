@@ -6,7 +6,7 @@ setup(
     description="GTK4 panel to toggle background services and CPU cores",
     long_description=open("README.md").read(),
     long_description_content_type="text/markdown",
-    author="koi",
+    author="oguzemrebal",
     license="GPL-3.0-or-later",
     packages=find_packages(),
     python_requires=">=3.10",
